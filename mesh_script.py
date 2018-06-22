@@ -16,8 +16,8 @@ Right side of the plane is positive Y coordinates, while left is negative.
 def points_from_stl(filename) :
     '''
     Generates an array of points from an .stl file
-    Input : file name, as a string
-    Output : array of shape (n, 3), n being the number of points and 3 being
+    INPUT : file name, as a string
+    OUTPUT : array of shape (n, 3), n being the number of points and 3 being
     the x, y, z coordinates in that order.
     '''
     mesh = stl.mesh.Mesh.from_file(filename)
@@ -31,51 +31,89 @@ def points_from_stl(filename) :
     return np.unique(list_points, axis=0)
     
     
+def cosine_space(start, end, points) :
+    '''
+    Generates an array of values between parameters 'start' and 'end' with
+    spacing made from a cosine function (The values near the start and end are
+    more tightly spaced than those at the middle).
+    '''
+    lin = np.linspace(start, end, points)
+    array_pi = (lin - start)*np.pi/(end-start)
+    array_cos = np.zeros(points)
+    for i in range(points) :
+        array_cos[i] = np.cos(array_pi[i])
+    array_cos_2 = ((array_cos*-1)+1)/2
+    array_cos_3 = array_cos_2*(end-start)+start
+    return array_cos_3
+    
+
 def mesh_wing(files, columns=10, rows=10, wake=200, wake_points=10, 
-              function='thin_plate', wing='right') :
-              
+              wing='right', scale=1, spacing_c='linear', spacing_r='linear',
+              function='rbf', rbf_function='thin_plate', smooth=0) :
+
     '''
     Generates a mesh from a wing, to be used as a Panair network.
     Includes a wake.
     Requires the wing to be split into several files to define boundaries.
     
     Inputs :
-        files is a list of several filenames :
+    - 'files' is a list of several filenames :
     files 1-2 are the upper and lower surfaces of the wing. They will be 
     used to interpolate most of the points
     files 3-4 are lines defining the leading and trailing edge respectively,
     they are needed for the boundaries of the wing.
     files 5-6 are lines defining the junction of the wing with the fuselage,
     for the upper and lower parts.
-        columns is the number of points to be created along the span
-        rows is the number of points to be created between the edges.
+    - 'columns' is the number of points to be created along the span
+    - 'rows' is the number of points to be created between the edges.
     upper and lower parts will each have that number of points.
-        wake is the coordinate at which the wake should stop.
-        wake points is the number of points should be created between the
+    - 'wake' is the coordinate at which the wake should stop.
+    - 'wake points' is the number of points should be created between the
     trailing edge and the end of the wake.
-        function is the type of function to be used in the Rbf interpolation
-    process. Default is 'thin_plate' as it seemed to work well for wings.
-        wing should be 'right' or 'left' to define what wing is being meshed.
-    Default is right. Please note that the mirror_mesh function is an easy way
-    to generate the other wing.
+    - 'wing' should be 'right' or 'left' to define what wing is being meshed.
+    Default is right. Please note that Panair should calculate the symmetric 
+    of the wing automatically. The mirror_mesh function is an easy way to 
+    generate the other wing if needed.
+    - 'scale' defines if the mesh should be scaled up or down. Default value is 1
+    - 'function' defines if the mesh should be calculated using a Rbf or a
+    linear response surface. 
+    (Choose between 'rbf' or 'linear', default is 'rbf')
+    - 'rbf_function' is the function the Rbf should choose, if it is used.
+    Can be : 'multiquadric', 'gaussian', 'inverse', 'linear', 'cubic', 
+    'quintic' or 'thin_plate'. Default is 'thin_plate'.
+    - 'smooth' affects the smoothness of the Rbf. Default is 0. This can lead
+    to some weird results.
     
-    Output : an array of points of shape (4, c, n, 3), with 4 being the 
-    different networks : upper side, lower side, wingtip and wake, c being 
-    the number of columns, n the number of points in each column, and 3 being
+    OUTPUT : a list of networks, each of shape (c, n, 3) with c being the 
+    number of columns, n the number of points in each column, and 3 being
     the x, y, z coordinates in that order.
     '''
-
-    points_upper = points_from_stl(files[0])
-    points_lower = points_from_stl(files[1])
-    points_line_front = points_from_stl(files[2])
-    points_line_back = points_from_stl(files[3])
-    points_upper_line = points_from_stl(files[4])
-    points_lower_line = points_from_stl(files[5])
+              
+    points_upper = points_from_stl(files[0])*scale
+    points_lower = points_from_stl(files[1])*scale
+    points_line_front = points_from_stl(files[2])*scale
+    points_line_back = points_from_stl(files[3])*scale
+    points_upper_line = points_from_stl(files[4])*scale
+    points_lower_line = points_from_stl(files[5])*scale
     
-    rbf_upper = si.Rbf(points_upper[:,0], points_upper[:,1], 
-                       points_upper[:,2], function=function)
-    rbf_lower = si.Rbf(points_lower[:,0], points_lower[:,1], 
-                       points_lower[:,2], function=function)
+    if spacing_c not in ['linear', 'cos'] or spacing_r not in ['linear', 'cos']:
+        exit('Spacing should be "linear" or "cos" only')
+    
+    if function == 'rbf' :
+        if rbf_function not in ['multiquadric', 'gaussian', 'inverse', 
+                                'linear', 'cubic', 'quintic', 'thin_plate'] :
+            exit('wrong rbf function')
+        rbf_upper = si.Rbf(points_upper[:,0], points_upper[:,1], 
+                       points_upper[:,2], function=rbf_function, smooth=smooth)
+        rbf_lower = si.Rbf(points_lower[:,0], points_lower[:,1], 
+                       points_lower[:,2], function=rbf_function, smooth=smooth)
+    elif function == 'linear' :
+        rbf_upper = si.LinearNDInterpolator(points_upper[:,0:2], 
+                                            points_upper[:,2])
+        rbf_lower = si.LinearNDInterpolator(points_lower[:,0:2], 
+                                            points_lower[:,2])
+    else :
+        exit('function must be "rbf" or "linear"')
     
     rbf_line_front_x = si.Rbf(points_line_front[:,1], points_line_front[:,0], 
                             function='linear')
@@ -99,8 +137,13 @@ def mesh_wing(files, columns=10, rows=10, wake=200, wake_points=10,
     mesh_lower = []
     mesh_wake = []
     
-    points_x = np.linspace(max(points_upper_line[:,0]), 
-                           min(points_upper_line[:,0]), rows)
+    if spacing_r == 'linear' :
+        points_x = np.linspace(max(points_upper_line[:,0]), 
+                               min(points_upper_line[:,0]), rows)
+    elif spacing_r == 'cos' :
+        points_x = cosine_space(max(points_upper_line[:,0]), 
+                                min(points_upper_line[:,0]), rows)
+                                
     point_A = [points_x[0], 
                rbf_upper_line_y(points_x[0]), rbf_upper_line_z(points_x[0])]
     col = []
@@ -108,8 +151,7 @@ def mesh_wing(files, columns=10, rows=10, wake=200, wake_points=10,
         col.append([x, rbf_upper_line_y(x), rbf_upper_line_z(x)])
     mesh_upper.append(col)
     
-    points_x = np.linspace(min(points_lower_line[:,0]), 
-                           max(points_lower_line[:,0]), rows)
+    points_x = points_x[::-1]
     col=[]
     for x in points_x :
         col.append([x, rbf_lower_line_y(x), rbf_lower_line_z(x)])
@@ -123,32 +165,42 @@ def mesh_wing(files, columns=10, rows=10, wake=200, wake_points=10,
     
     
     if wing == 'right' :
-        line_limit = max(max(np.array(mesh_upper[0])[:,1]), max(np.array(mesh_lower[0])[:,1]))
+        line_limit = max(max(np.array(mesh_upper[0])[:,1]), 
+                         max(np.array(mesh_lower[0])[:,1]))
         wing_tip = max(points_upper[:,1])
     elif wing == 'left' :
-        line_limit = min(min(np.array(mesh_upper[0])[:,1]), min(np.array(mesh_lower[0])[:,1]))
+        line_limit = min(min(np.array(mesh_upper[0])[:,1]), 
+                         min(np.array(mesh_lower[0])[:,1]))
         wing_tip = min(points_upper[:,1])
     else :
         exit('Error : wing parameter must be "right" or "left" only')
         
-    columns_y = np.linspace(line_limit, wing_tip, columns)[1:]
+    if spacing_c == 'linear' :
+        columns_y = np.linspace(line_limit, wing_tip, columns)[1:]
+    elif spacing_c == 'cos' :
+        columns_y = cosine_space(line_limit, wing_tip, columns)[1:]
     
     for y in columns_y :
         
-        points_x = np.linspace(rbf_line_back_x(y), rbf_line_front_x(y), rows)
+        if spacing_r == 'linear' :
+            points_x = np.linspace(rbf_line_back_x(y), 
+                                   rbf_line_front_x(y), rows)
+        elif spacing_r == 'cos' :
+            points_x = cosine_space(rbf_line_back_x(y), 
+                                    rbf_line_front_x(y), rows)
         point_A = [points_x[0], y, rbf_line_back_z(y)]
         col = []
         col.append([points_x[0], y, rbf_line_back_z(y)])
         for x in points_x[1:-1] :
-            col.append([x, y, rbf_upper(x, y)])
+            col.append([x, y, rbf_upper([x,y])])
         col.append([points_x[-1], y, rbf_line_front_z(y)])
         mesh_upper.append(col)
             
-        points_x = np.linspace(rbf_line_front_x(y), rbf_line_back_x(y), rows)
+        points_x = points_x[::-1]
         col = []
         col.append([points_x[0], y, rbf_line_front_z(y)])
         for x in points_x[1:-1] :
-            col.append([x, y, rbf_lower(x,y)])
+            col.append([x, y, rbf_lower([x,y])])
         col.append([points_x[-1], y, rbf_line_back_z(y)])
         mesh_lower.append(col)
             
@@ -158,17 +210,20 @@ def mesh_wing(files, columns=10, rows=10, wake=200, wake_points=10,
             col.append([x, point_A[1], point_A[2]])
         mesh_wake.append(col)
             
-        mesh_tip = [mesh_upper[-1][::-1], mesh_lower[-1]]
+    mesh_tip = [mesh_upper[-1], mesh_lower[-1][::-1]]
+    mesh_root = [mesh_upper[0], mesh_lower[0][::-1]]
         
-    return [np.array(mesh_upper), np.array(mesh_lower),np.array(mesh_tip), np.array(mesh_wake)]
+    return [np.array(mesh_upper), np.array(mesh_lower), 
+            np.array(mesh_tip), np.array(mesh_root), 
+            np.array(mesh_wake)]
 
 
 def mesh_part(files, axis=[0,1,2], columns=10, rows=10, function='cubic') :
     '''
     Generates a mesh for any part using a similiar process as the wing.
-    Currently does not fit the panair expectations, work in progress.
+    /!\ Currently does not fit the panair expectations, work in progress.
     
-    Inputs :
+    INPUT :
         files is a list of several filenames :
     files 1-2 are the 2 sides (upper/lower, left/right etc.) of the geometry.
     They will be used to interpolate the points
@@ -183,7 +238,7 @@ def mesh_part(files, axis=[0,1,2], columns=10, rows=10, function='cubic') :
     process. Default is 'cubic' but the right one to use really depends on
     the geometry.
     
-    Output : an array of points of shape (c, n, 3), with c being the number 
+    OUTPUT : an array of points of shape (c, n, 3), with c being the number 
     of columns, n the number of points in each column, and 3 being
     the x, y, z coordinates in that order.
     '''
@@ -223,22 +278,10 @@ def mesh_part(files, axis=[0,1,2], columns=10, rows=10, function='cubic') :
         
     return np.array(mesh_all)
     
-def remove_double_points(mesh) :
-    new_m = []
-    for c in mesh :
-        new_c = []
-        for i in range(len(c)) :
-            if len(new_c) == 0 :
-                new_c.append(c[i])
-            elif not np.array_equal(c[i], new_c[-1]) :
-                new_c.append(c[i])
-        new_m.append(new_c)
-    return np.array(new_m)
-    
 def mirror_mesh(mesh, axis=1) :
     '''
     Mirrors a mesh along one axis. (Inverts each coordinate in that axis)
-    Input is a mesh, and the axis (default is 1, for y axis). (0=x, 1=y, 2=z)
+    Input is a mesh, and the axis (default is 1, for y axis (0=x, 1=y, 2=z)).
     Output is the mirrored mesh with the same shape as the original one.
     '''
     new_mesh = np.array(mesh)
@@ -249,6 +292,9 @@ def scatter_plot(*meshes) :
     '''
     Display one or several meshes in a 3d plot.
     Bounds are scaled to fit entire model without deformation.
+    
+    INPUT : one one several meshes of shape (c, r, 3) as made by the mesh_wing
+    function.
     '''
     bounds = []
     fig = plt.figure()
